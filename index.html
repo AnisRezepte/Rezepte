@@ -21,6 +21,13 @@ header h1{font-size:28px;margin:8px 0 4px}
 header p{margin:0 0 18px;color:var(--muted)}
 input[type=search]{width:100%;padding:12px 14px;font-size:17px;border-radius:12px;
   border:1px solid var(--line);background:var(--card);color:var(--text)}
+.cats{display:flex;gap:6px;overflow-x:auto;margin:16px -16px 0;padding:0 16px 4px;scrollbar-width:none}
+.cats::-webkit-scrollbar{display:none}
+.cat{flex:0 0 auto;border:0;background:none;color:var(--muted);font-size:16px;font-weight:600;
+  padding:8px 12px;border-bottom:3px solid transparent;cursor:pointer}
+.cat.on{color:var(--accent);border-bottom-color:var(--accent)}
+.source{margin-top:24px;padding-top:12px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
+.source a{color:var(--accent)}
 .tags{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 18px}
 .tag{border:1px solid var(--line);background:var(--card);color:var(--text);
   padding:6px 12px;border-radius:999px;font-size:14px;cursor:pointer}
@@ -38,6 +45,9 @@ article h1{font-size:26px;margin:0 0 6px}
 article h2{font-size:19px;margin:22px 0 8px;color:var(--accent)}
 article ul,article ol{padding-left:22px}
 article li{margin:4px 0}
+.thumb{display:block;width:100%;height:170px;object-fit:cover;border-radius:10px;margin-bottom:10px;background:var(--accent-soft)}
+.hero{display:block;width:100%;max-height:360px;object-fit:cover;border-radius:12px;margin:0 0 16px}
+article p img{max-width:100%;border-radius:10px}
 .portions{display:flex;align-items:center;gap:12px;margin:14px 0 4px}
 .portions button{width:38px;height:38px;border-radius:50%;border:1px solid var(--line);
   background:var(--accent-soft);color:var(--accent);font-size:20px;cursor:pointer}
@@ -56,12 +66,13 @@ const FOLDER = "rezepte";
 
 let recipes = [];
 let activeTag = null;
+let activeCat = null;
 let query = "";
 
 function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
 
 function parse(text, file){
-  const meta = {titel:file.replace(/\.md$/,""), portionen:"", zeit:"", tags:[]};
+  const meta = {titel:file.replace(/\.md$/,""), portionen:"", zeit:"", bild:"", kategorie:"", quelle:"", tags:[]};
   let body = text;
   const m = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
   if(m){
@@ -75,6 +86,8 @@ function parse(text, file){
   }
   return {file, ...meta, body};
 }
+
+function imgSrc(b){ if(!b) return ""; return /^https?:/.test(b) ? b : `${FOLDER}/bilder/${b}`; }
 
 const FRAC={"½":.5,"¼":.25,"¾":.75,"⅓":1/3,"⅔":2/3};
 function scaleLine(line, f){
@@ -103,6 +116,7 @@ function md(src, factor){
       if(list!=="ol"){ close(); html+="<ol>"; list="ol"; }
       html+=`<li>${inline(m[1])}</li>`;
     }
+    else if(m=line.match(/^!\[(.*?)\]\((.+?)\)/)){ close(); html+=`<p><img src="${esc(imgSrc(m[2]))}" alt="${esc(m[1])}" loading="lazy"></p>`; }
     else if(line.trim()===""){ close(); }
     else { close(); html+=`<p>${inline(line)}</p>`; }
   });
@@ -127,23 +141,30 @@ async function load(){
 }
 
 function renderList(){
-  const tags=[...new Set(recipes.flatMap(r=>r.tags))].sort((a,b)=>a.localeCompare(b,"de"));
+  const cats=[...new Set(recipes.map(r=>r.kategorie).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"de"));
+  if(activeCat && !cats.includes(activeCat)) activeCat=null;
+  const inCat=recipes.filter(r=>!activeCat||r.kategorie===activeCat);
+  const tags=[...new Set(inCat.flatMap(r=>r.tags))].sort((a,b)=>a.localeCompare(b,"de"));
+  if(activeTag && !tags.includes(activeTag)) activeTag=null;
   const q=query.toLowerCase();
-  const shown=recipes.filter(r=>(!activeTag||r.tags.includes(activeTag)) &&
-    (!q || (r.titel+" "+r.body+" "+r.tags.join(" ")).toLowerCase().includes(q)));
+  const shown=inCat.filter(r=>(!activeTag||r.tags.includes(activeTag)) &&
+    (!q || (r.titel+" "+r.kategorie+" "+r.body+" "+r.tags.join(" ")).toLowerCase().includes(q)));
   document.getElementById("app").innerHTML=`
-    <header><h1>Meine Rezepte</h1><p>${recipes.length} Rezepte</p></header>
+    <header><h1>Meine Rezepte</h1><p>${shown.length} von ${recipes.length} Rezepten</p></header>
     <input type="search" id="q" placeholder="Rezept oder Zutat suchen …" value="${esc(query)}">
+    ${cats.length?`<div class="cats"><button class="cat ${activeCat?"":"on"}" data-c="">Alle</button>${cats.map(c=>`<button class="cat ${c===activeCat?"on":""}" data-c="${esc(c)}">${esc(c)}</button>`).join("")}</div>`:""}
     <div class="tags">${tags.map(t=>`<button class="tag ${t===activeTag?"on":""}" data-t="${esc(t)}">${esc(t)}</button>`).join("")}</div>
     <div class="list">${shown.length?shown.map(r=>`
       <a class="item" href="#${encodeURIComponent(r.file)}">
+        ${r.bild?`<img class="thumb" src="${esc(imgSrc(r.bild))}" alt="" loading="lazy">`:""}
         <h2>${esc(r.titel)}</h2>
-        <div class="meta">${[r.zeit, r.portionen&&r.portionen+" Portionen"].filter(Boolean).map(esc).join(" · ")}</div>
+        <div class="meta">${[r.kategorie, r.zeit, r.portionen&&r.portionen+" Portionen"].filter(Boolean).map(esc).join(" · ")}</div>
         ${r.tags.map(t=>`<span class="mini">${esc(t)}</span>`).join("")}
       </a>`).join(""):`<p class="note">Nichts gefunden.</p>`}</div>
     <footer>Rezepte liegen als Textdateien im Ordner „${FOLDER}“ auf GitHub.</footer>`;
   const qi=document.getElementById("q");
   qi.oninput=e=>{query=e.target.value; renderList(); const n=document.getElementById("q"); n.focus(); n.setSelectionRange(query.length,query.length);};
+  document.querySelectorAll(".cat").forEach(b=>b.onclick=()=>{activeCat=b.dataset.c||null; activeTag=null; renderList();});
   document.querySelectorAll(".tag").forEach(b=>b.onclick=()=>{activeTag=activeTag===b.dataset.t?null:b.dataset.t; renderList();});
 }
 
@@ -154,12 +175,14 @@ function renderRecipe(r, portions){
   document.getElementById("app").innerHTML=`
     <a class="back" href="#">← Alle Rezepte</a>
     <article>
+      ${r.bild?`<img class="hero" src="${esc(imgSrc(r.bild))}" alt="${esc(r.titel)}">`:""}
       <h1>${esc(r.titel)}</h1>
-      <div class="meta">${esc(r.zeit||"")}</div>
+      <div class="meta">${[r.kategorie, r.zeit].filter(Boolean).map(esc).join(" · ")}</div>
       ${r.tags.map(t=>`<span class="mini">${esc(t)}</span>`).join("")}
       ${base?`<div class="portions"><button id="minus" aria-label="Weniger">−</button>
         <strong>${p} Portionen</strong><button id="plus" aria-label="Mehr">+</button></div>`:""}
       ${md(r.body, factor)}
+      ${r.quelle?`<div class="source">Quelle: ${/^https?:/.test(r.quelle)?`<a href="${esc(r.quelle)}" target="_blank" rel="noopener">${esc(r.quelle.replace(/^https?:\/\/(www\.)?/,"").split("/")[0])}</a>`:esc(r.quelle)}</div>`:""}
     </article>`;
   if(base){
     document.getElementById("minus").onclick=()=>p>1&&renderRecipe(r,p-1);
