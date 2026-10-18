@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meine Rezepte</title>
+<style>
+:root{
+  --bg:#faf7f2; --card:#ffffff; --text:#2b2622; --muted:#7a6f66;
+  --accent:#c4552d; --accent-soft:#f6e3da; --line:#e8e0d6;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#1c1a18; --card:#26231f; --text:#f1ebe4; --muted:#a89d92;
+         --accent:#e57a52; --accent-soft:#3a2a22; --line:#38332d; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:17px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:760px;margin:0 auto;padding:20px 16px 60px}
+header h1{font-size:28px;margin:8px 0 4px}
+header p{margin:0 0 18px;color:var(--muted)}
+input[type=search]{width:100%;padding:12px 14px;font-size:17px;border-radius:12px;
+  border:1px solid var(--line);background:var(--card);color:var(--text)}
+.tags{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 18px}
+.tag{border:1px solid var(--line);background:var(--card);color:var(--text);
+  padding:6px 12px;border-radius:999px;font-size:14px;cursor:pointer}
+.tag.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.list{display:grid;gap:12px}
+.item{display:block;text-decoration:none;color:inherit;background:var(--card);
+  border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.item h2{font-size:19px;margin:0 0 4px}
+.meta{color:var(--muted);font-size:14px}
+.mini{display:inline-block;background:var(--accent-soft);color:var(--accent);
+  border-radius:999px;padding:1px 9px;font-size:13px;margin:6px 6px 0 0}
+.back{display:inline-block;margin:4px 0 14px;color:var(--accent);text-decoration:none;font-weight:600}
+article{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 18px}
+article h1{font-size:26px;margin:0 0 6px}
+article h2{font-size:19px;margin:22px 0 8px;color:var(--accent)}
+article ul,article ol{padding-left:22px}
+article li{margin:4px 0}
+.portions{display:flex;align-items:center;gap:12px;margin:14px 0 4px}
+.portions button{width:38px;height:38px;border-radius:50%;border:1px solid var(--line);
+  background:var(--accent-soft);color:var(--accent);font-size:20px;cursor:pointer}
+.note{color:var(--muted);text-align:center;padding:30px 10px}
+footer{margin-top:30px;color:var(--muted);font-size:13px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><p class="note">Rezepte werden geladen …</p></div>
+
+<script>
+const host = location.hostname;
+const OWNER = host.endsWith(".github.io") ? host.split(".")[0] : "AnisRezepte";
+const REPO  = location.pathname.split("/").filter(Boolean)[0] || "rezepte";
+const FOLDER = "rezepte";
+
+let recipes = [];
+let activeTag = null;
+let query = "";
+
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+
+function parse(text, file){
+  const meta = {titel:file.replace(/\.md$/,""), portionen:"", zeit:"", tags:[]};
+  let body = text;
+  const m = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
+  if(m){
+    body = text.slice(m[0].length);
+    m[1].split("\n").forEach(line=>{
+      const i=line.indexOf(":"); if(i<0) return;
+      const k=line.slice(0,i).trim().toLowerCase(); let v=line.slice(i+1).trim();
+      if(k==="tags"){ meta.tags=v.replace(/[\[\]]/g,"").split(",").map(t=>t.trim()).filter(Boolean); }
+      else meta[k]=v;
+    });
+  }
+  return {file, ...meta, body};
+}
+
+const FRAC={"½":.5,"¼":.25,"¾":.75,"⅓":1/3,"⅔":2/3};
+function scaleLine(line, f){
+  if(f===1) return line;
+  return line.replace(/^(\d+\s*\/\s*\d+|\d+(?:[.,]\d+)?|[½¼¾⅓⅔])/, n=>{
+    let v = FRAC[n] ?? (n.includes("/") ? n.split("/").reduce((a,b)=>a/b) : parseFloat(n.replace(",",".")));
+    v = Math.round(v*f*100)/100;
+    return String(v).replace(".",",");
+  });
+}
+
+function md(src, factor){
+  let html="", list=null, section="";
+  const close=()=>{ if(list){ html+=`</${list}>`; list=null; } };
+  const inline=s=>esc(s).replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/\*(.+?)\*/g,"<em>$1</em>");
+  src.split("\n").forEach(raw=>{
+    const line=raw.trimEnd();
+    let m;
+    if(m=line.match(/^(#{1,3})\s+(.*)/)){ close(); section=m[2].toLowerCase(); html+=`<h2>${inline(m[2])}</h2>`; }
+    else if(m=line.match(/^\s*[-*]\s+(.*)/)){
+      if(list!=="ul"){ close(); html+="<ul>"; list="ul"; }
+      const t = section.startsWith("zutat") ? scaleLine(m[1],factor) : m[1];
+      html+=`<li>${inline(t)}</li>`;
+    }
+    else if(m=line.match(/^\s*\d+[.)]\s+(.*)/)){
+      if(list!=="ol"){ close(); html+="<ol>"; list="ol"; }
+      html+=`<li>${inline(m[1])}</li>`;
+    }
+    else if(line.trim()===""){ close(); }
+    else { close(); html+=`<p>${inline(line)}</p>`; }
+  });
+  close(); return html;
+}
+
+async function load(){
+  const app=document.getElementById("app");
+  try{
+    const res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${FOLDER}`);
+    if(!res.ok) throw new Error(res.status);
+    const files = (await res.json()).filter(f=>f.name.endsWith(".md") && !f.name.startsWith("_"));
+    recipes = await Promise.all(files.map(async f=>{
+      const t = await (await fetch(`${FOLDER}/${encodeURIComponent(f.name)}?v=${f.sha}`)).text();
+      return parse(t, f.name);
+    }));
+    recipes.sort((a,b)=>a.titel.localeCompare(b.titel,"de"));
+    route();
+  }catch(e){
+    app.innerHTML=`<p class="note">Die Rezepte konnten gerade nicht geladen werden.<br>Bitte in ein paar Minuten neu laden.</p>`;
+  }
+}
+
+function renderList(){
+  const tags=[...new Set(recipes.flatMap(r=>r.tags))].sort((a,b)=>a.localeCompare(b,"de"));
+  const q=query.toLowerCase();
+  const shown=recipes.filter(r=>(!activeTag||r.tags.includes(activeTag)) &&
+    (!q || (r.titel+" "+r.body+" "+r.tags.join(" ")).toLowerCase().includes(q)));
+  document.getElementById("app").innerHTML=`
+    <header><h1>Meine Rezepte</h1><p>${recipes.length} Rezepte</p></header>
+    <input type="search" id="q" placeholder="Rezept oder Zutat suchen …" value="${esc(query)}">
+    <div class="tags">${tags.map(t=>`<button class="tag ${t===activeTag?"on":""}" data-t="${esc(t)}">${esc(t)}</button>`).join("")}</div>
+    <div class="list">${shown.length?shown.map(r=>`
+      <a class="item" href="#${encodeURIComponent(r.file)}">
+        <h2>${esc(r.titel)}</h2>
+        <div class="meta">${[r.zeit, r.portionen&&r.portionen+" Portionen"].filter(Boolean).map(esc).join(" · ")}</div>
+        ${r.tags.map(t=>`<span class="mini">${esc(t)}</span>`).join("")}
+      </a>`).join(""):`<p class="note">Nichts gefunden.</p>`}</div>
+    <footer>Rezepte liegen als Textdateien im Ordner „${FOLDER}“ auf GitHub.</footer>`;
+  const qi=document.getElementById("q");
+  qi.oninput=e=>{query=e.target.value; renderList(); const n=document.getElementById("q"); n.focus(); n.setSelectionRange(query.length,query.length);};
+  document.querySelectorAll(".tag").forEach(b=>b.onclick=()=>{activeTag=activeTag===b.dataset.t?null:b.dataset.t; renderList();});
+}
+
+function renderRecipe(r, portions){
+  const base=parseFloat(String(r.portionen).replace(",","."))||0;
+  const p = portions || base;
+  const factor = base ? p/base : 1;
+  document.getElementById("app").innerHTML=`
+    <a class="back" href="#">← Alle Rezepte</a>
+    <article>
+      <h1>${esc(r.titel)}</h1>
+      <div class="meta">${esc(r.zeit||"")}</div>
+      ${r.tags.map(t=>`<span class="mini">${esc(t)}</span>`).join("")}
+      ${base?`<div class="portions"><button id="minus" aria-label="Weniger">−</button>
+        <strong>${p} Portionen</strong><button id="plus" aria-label="Mehr">+</button></div>`:""}
+      ${md(r.body, factor)}
+    </article>`;
+  if(base){
+    document.getElementById("minus").onclick=()=>p>1&&renderRecipe(r,p-1);
+    document.getElementById("plus").onclick=()=>renderRecipe(r,p+1);
+  }
+  window.scrollTo(0,0);
+}
+
+function route(){
+  const f=decodeURIComponent(location.hash.slice(1));
+  const r=recipes.find(x=>x.file===f);
+  r ? renderRecipe(r) : renderList();
+}
+window.addEventListener("hashchange", route);
+load();
+</script>
+</body>
+</html>
